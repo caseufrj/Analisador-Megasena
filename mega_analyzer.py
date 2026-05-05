@@ -153,25 +153,22 @@ class MegaAnalyzerApp:
             return None
         df_f = self.df.copy()
 
-        start_dt = self.cal_start.get_date()
-        end_dt = self.cal_end.get_date()
+        #  Converte explicitamente para Timestamp do Pandas
+        start_dt = pd.Timestamp(self.cal_start.get_date())
+        end_dt = pd.Timestamp(self.cal_end.get_date())
 
-        self._print(f"🔍 Período selecionado: {start_dt.strftime('%d/%m/%Y')} até {end_dt.strftime('%d/%m/%Y')}")
-        
+        self._print(f"📅 Período: {start_dt.strftime('%d/%m/%Y')} até {end_dt.strftime('%d/%m/%Y')}")
+
         if self.date_col:
-            min_data = self.df[self.date_col].min()
-            max_data = self.df[self.date_col].max()
-            self._print(f"📊 Dados disponíveis: {min_data.strftime('%d/%m/%Y')} até {max_data.strftime('%d/%m/%Y')}")
-            
+            # Comparação segura entre colunas datetime64 e Timestamp
             df_f = df_f[df_f[self.date_col] >= start_dt]
             df_f = df_f[df_f[self.date_col] <= end_dt]
 
         count = len(df_f)
-        self._print(f"✅ Sorteios encontrados: {count}\n")
-        
+        self._print(f"✅ {count} sorteios encontrados no período.\n")
+
         if count == 0:
-            self._print("❌ NENHUM sorteio neste período!")
-            self._print("💡 Ajuste as datas ou verifique se a planilha tem dados nesse intervalo\n")
+            self._print("❌ Nenhum sorteio encontrado. Verifique o intervalo.")
             return None
 
         return [sorted(row.astype(int)) for _, row in df_f[self.bolas_cols].iterrows()], count
