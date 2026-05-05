@@ -23,7 +23,6 @@ class MegaAnalyzerApp:
         self._setup_ui()
 
     def _setup_ui(self):
-        # Estilos
         style = ttk.Style()
         style.theme_use('clam')
         style.configure('TButton', padding=6, font=('Segoe UI', 10))
@@ -32,7 +31,6 @@ class MegaAnalyzerApp:
         style.configure('TFrame', background='#f0f0f0')
         self.root.configure(bg='#f0f0f0')
 
-        # Frame Principal
         main = ttk.Frame(self.root, padding=15)
         main.pack(fill='both', expand=True)
 
@@ -48,7 +46,6 @@ class MegaAnalyzerApp:
         filt_frame = ttk.LabelFrame(main, text="⚙️ Filtros de Pesquisa", padding=10)
         filt_frame.pack(fill='x', pady=10)
 
-        # Data
         ttk.Label(filt_frame, text="Período (opcional):").grid(row=0, column=0, sticky='w')
         self.date_start = ttk.Entry(filt_frame, width=12)
         self.date_start.grid(row=0, column=1, padx=5)
@@ -57,13 +54,11 @@ class MegaAnalyzerApp:
         self.date_end.grid(row=0, column=3, padx=5)
         ttk.Label(filt_frame, text="(DD/MM/AAAA)").grid(row=0, column=4, sticky='w')
 
-        # Combo Size
         ttk.Label(filt_frame, text="Números juntos:").grid(row=1, column=0, sticky='w', pady=(10,0))
         self.combo_size = ttk.Combobox(filt_frame, values=[2, 3, 4, 5, 6], state='readonly', width=5)
         self.combo_size.set(3)
         self.combo_size.grid(row=1, column=1, padx=5, pady=(10,0))
 
-        # Faixa Personalizada
         ttk.Label(filt_frame, text="Faixa % personalizada:").grid(row=1, column=2, sticky='w', pady=(10,0))
         self.range_min = ttk.Entry(filt_frame, width=4)
         self.range_min.insert(0, "1")
@@ -73,7 +68,7 @@ class MegaAnalyzerApp:
         self.range_max.insert(0, "60")
         self.range_max.grid(row=1, column=5, padx=5, pady=(10,0))
 
-        # 3. Botões de Ação
+        # 3. Botões
         btn_frame = ttk.Frame(main)
         btn_frame.pack(fill='x', pady=15)
         ttk.Button(btn_frame, text="🔍 Analisar Combinações", command=self.run_combo_analysis).pack(side='left', padx=5)
@@ -90,24 +85,18 @@ class MegaAnalyzerApp:
         self.text_res.pack(side='left', fill='both', expand=True)
 
     def load_file(self):
-        file_path = filedialog.askopenfilename(
-            filetypes=[("Excel/CSV", "*.xlsx *.xls *.csv"), ("Todos", "*.*")]
-        )
+        file_path = filedialog.askopenfilename(filetypes=[("Excel/CSV", "*.xlsx *.xls *.csv"), ("Todos", "*.*")])
         if not file_path:
             return
 
         try:
             ext = os.path.splitext(file_path)[1].lower()
-            if ext == '.csv':
-                self.df = pd.read_csv(file_path, sep=None, engine='python', encoding='utf-8-sig')
-            else:
-                self.df = pd.read_excel(file_path)
+            self.df = pd.read_csv(file_path, sep=None, engine='python', encoding='utf-8-sig') if ext == '.csv' else pd.read_excel(file_path)
 
             # Detectar colunas de bolas
-            bola_cols = [c for c in self.df.columns if re.search(r'bola|n[º°]?|dezena', c, re.IGNORECASE)]
+            bola_cols = [c for c in self.df.columns if re.search(r'bola|n[º°]?|dezena', str(c), re.IGNORECASE)]
             if len(bola_cols) < 6:
                 bola_cols = self.df.select_dtypes(include='number').columns[:6]
-            
             if len(bola_cols) < 6:
                 raise ValueError("Planilha não contém 6 colunas numéricas identificáveis.")
             
@@ -115,15 +104,21 @@ class MegaAnalyzerApp:
             self.df[self.bolas_cols] = self.df[self.bolas_cols].apply(pd.to_numeric, errors='coerce')
             self.df.dropna(subset=self.bolas_cols, inplace=True)
 
-            # Detectar coluna de data
-            date_candidates = [c for c in self.df.columns if re.search(r'data|concurso|sorteio|date', c, re.IGNORECASE)]
-            self.date_col = date_candidates[0] if date_candidates else None
-            
+            # 🔧 CORREÇÃO: Detecção e conversão de data robusta
+            date_keywords = ['data', 'sorteio', 'concurso', 'date', 'dia']
+            possible_date_cols = [c for c in self.df.columns if any(k in str(c).lower() for k in date_keywords)]
+            self.date_col = possible_date_cols[0] if possible_date_cols else None
+
             if self.date_col:
-                self.df[self.date_col] = pd.to_datetime(self.df[self.date_col], errors='coerce', dayfirst=True)
+                # Força formato BR e ignora linhas com data inválida
+                self.df[self.date_col] = pd.to_datetime(self.df[self.date_col], dayfirst=True, errors='coerce')
+                self.df.dropna(subset=[self.date_col], inplace=True)
+                self._print(f"📅 Coluna de data detectada: `{self.date_col}`")
+            else:
+                self._print("️ Nenhuma coluna de data encontrada. Filtros de período serão ignorados.")
 
             self.path_var.set(os.path.basename(file_path))
-            self._print("✅ Planilha carregada com sucesso.\n")
+            self._print(f"✅ Planilha carregada: {len(self.df)} sorteios válidos.\n")
 
         except Exception as e:
             messagebox.showerror("Erro", f"Falha ao carregar planilha:\n{e}")
@@ -133,21 +128,25 @@ class MegaAnalyzerApp:
             return None
         df_f = self.df.copy()
 
-        # Filtro de Data
         start = self.date_start.get().strip()
         end = self.date_end.get().strip()
+
         if self.date_col and (start or end):
             try:
+                mask = pd.Series([True] * len(df_f))
                 if start:
-                    df_f = df_f[df_f[self.date_col] >= datetime.strptime(start, '%d/%m/%Y')]
+                    start_dt = pd.to_datetime(start, dayfirst=True)
+                    mask &= df_f[self.date_col] >= start_dt
                 if end:
-                    df_f = df_f[df_f[self.date_col] <= datetime.strptime(end, '%d/%m/%Y')]
-            except ValueError:
-                messagebox.showwarning("Formato de Data", "Use o formato DD/MM/AAAA ou deixe em branco.")
+                    end_dt = pd.to_datetime(end, dayfirst=True)
+                    mask &= df_f[self.date_col] <= end_dt
+                df_f = df_f[mask]
+            except Exception as e:
+                messagebox.showwarning("Erro de Data", f"Formato de data inválido. Use DD/MM/AAAA.\n{e}")
                 return None
 
         if df_f.empty:
-            self._print("⚠️ Nenhum sorteio encontrado no período selecionado.")
+            self._print("️ Nenhum sorteio encontrado no período selecionado.")
             return None
 
         return [sorted(row.astype(int)) for _, row in df_f[self.bolas_cols].iterrows()]
@@ -156,7 +155,7 @@ class MegaAnalyzerApp:
         bolas = self._get_filtered_data()
         if not bolas: return
         n = int(self.combo_size.get())
-        self._print(f"🔍 Analisando combinações de {n} números...\n")
+        self._print(f" Analisando combinações de {n} números...\n")
 
         counter = Counter()
         for jogo in bolas:
@@ -180,7 +179,7 @@ class MegaAnalyzerApp:
             messagebox.showwarning("Intervalo Inválido", "Informe números entre 1 e 60. Ex: 11 até 30")
             return
 
-        self._print(f"📊 Análise da faixa {r_min}-{r_max}:\n")
+        self._print(f" Análise da faixa {r_min}-{r_max}:\n")
         total_jogos = len(bolas)
         total_nums = total_jogos * 6
         contagem = 0
@@ -203,14 +202,12 @@ class MegaAnalyzerApp:
         n = int(self.combo_size.get())
         self._print(f"🎲 Gerando jogos baseados nos top números (combinações de {n})...\n")
 
-        # Extrair frequências individuais dos números mais recorrentes
         freq_all = Counter()
         for jogo in bolas:
             freq_all.update(jogo)
         
-        top_numbers = [num for num, _ in freq_all.most_common(25)] # Pool dos 25 mais frequentes
+        top_numbers = [num for num, _ in freq_all.most_common(25)]
 
-        # Gerar 5 jogos válidos
         jogos_gerados = set()
         attempts = 0
         while len(jogos_gerados) < 5 and attempts < 1000:
