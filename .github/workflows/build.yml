@@ -2,32 +2,45 @@ name: Build Windows EXE
 
 on:
   push:
+    branches: ["main"]
     tags:
       - 'v*'
+
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: windows-latest
+    
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt -r requirements-build.txt
-
-      - name: Build EXE with PyInstaller
-        run: pyinstaller --onefile --noconsole --name "MegaSenaAnalyzer" mega_analyzer.py
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/MegaSenaAnalyzer.exe
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - uses: actions/checkout@v4
+    
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -r requirements-build.txt
+    
+    - name: Build EXE with PyInstaller
+      run: |
+        pyinstaller --onefile --noconsole --name "MegaSenaAnalyzer" mega_analyzer.py
+    
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: MegaSenaAnalyzer
+        path: dist/MegaSenaAnalyzer.exe
+    
+    - name: Create Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: dist/MegaSenaAnalyzer.exe
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
