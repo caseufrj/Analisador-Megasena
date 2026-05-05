@@ -11,7 +11,7 @@ from datetime import datetime
 class MegaAnalyzerApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("🎲 Mega-Sena Analyzer Pro")
+        self.root.title(" Mega-Sena Analyzer Pro")
         self.root.geometry("750x850")
         self.root.resizable(False, False)
 
@@ -69,8 +69,8 @@ class MegaAnalyzerApp:
         # Botões
         btn_frame = ttk.Frame(main)
         btn_frame.pack(fill='x', pady=15)
-        ttk.Button(btn_frame, text="🔍 Analisar Combinações", command=self.run_combo_analysis).pack(side='left', padx=5)
-        ttk.Button(btn_frame, text="📊 Analisar Faixa %", command=self.run_range_analysis).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text=" Repetições", command=self.run_combo_analysis).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="📊 Faixa %", command=self.run_range_analysis).pack(side='left', padx=5)
         ttk.Button(btn_frame, text="🎲 Gerar Jogos", command=self.generate_games).pack(side='left', padx=5)
 
         # Resultados
@@ -106,15 +106,13 @@ class MegaAnalyzerApp:
             self.df[self.bolas_cols] = self.df[self.bolas_cols].apply(pd.to_numeric, errors='coerce')
             self.df.dropna(subset=self.bolas_cols, inplace=True)
 
-            # 🔧 DETECÇÃO ESPECÍFICA DA COLUNA DE DATA
+            # DETECÇÃO DA COLUNA DE DATA
             date_candidates = ['Data do Sorteio', 'Data', 'Sorteio', 'Concurso', 'date']
             self.date_col = None
             for col in date_candidates:
                 if col in self.df.columns:
                     self.date_col = col
                     break
-            
-            # Se não achou exato, busca parcial
             if not self.date_col:
                 for col in self.df.columns:
                     if 'data' in str(col).lower() or 'sorteio' in str(col).lower():
@@ -122,19 +120,14 @@ class MegaAnalyzerApp:
                         break
 
             if self.date_col:
-                # 🔧 CONVERSÃO FORÇADA DD/MM/AAAA
-                self.df[self.date_col] = pd.to_datetime(
-                    self.df[self.date_col], 
-                    format='%d/%m/%Y',  # Força formato brasileiro
-                    errors='coerce'
-                )
+                self.df[self.date_col] = pd.to_datetime(self.df[self.date_col], format='%d/%m/%Y', errors='coerce')
                 self.df.dropna(subset=[self.date_col], inplace=True)
                 self._print(f"✅ Coluna de data: '{self.date_col}'")
             else:
                 self._print("⚠️ Coluna de data não encontrada")
 
             self.path_var.set(os.path.basename(file_path))
-            self._print(f"✅ {len(self.df)} sorteios carregados\n")
+            self._print(f"✅ {len(self.df)} sorteios carregados no total.\n")
 
         except Exception as e:
             messagebox.showerror("Erro", f"Falha ao carregar:\n{e}")
@@ -149,19 +142,21 @@ class MegaAnalyzerApp:
 
         if self.date_col and (start_str or end_str):
             try:
-                # Converte datas do filtro
                 if start_str:
-                    start_dt = datetime.strptime(start_str, '%d/%m/%Y')
-                    df_f = df_f[df_f[self.date_col] >= start_dt]
+                    df_f = df_f[df_f[self.date_col] >= datetime.strptime(start_str, '%d/%m/%Y')]
                 if end_str:
-                    end_dt = datetime.strptime(end_str, '%d/%m/%Y')
-                    df_f = df_f[df_f[self.date_col] <= end_dt]
+                    df_f = df_f[df_f[self.date_col] <= datetime.strptime(end_str, '%d/%m/%Y')]
             except ValueError:
                 messagebox.showwarning("Data Inválida", "Use formato DD/MM/AAAA\nEx: 01/01/2024")
                 return None
 
-        if df_f.empty:
-            self._print("⚠️ Nenhum sorteio no período selecionado")
+        count = len(df_f)
+        self._print(f"📊 {count} sorteios no período selecionado.")
+        if count < 50:
+            self._print("⚠️ Amostra pequena (<50). Repetições são estatisticamente raras.")
+        
+        if count == 0:
+            self._print("⚠️ Nenhum sorteio encontrado.")
             return None
 
         return [sorted(row.astype(int)) for _, row in df_f[self.bolas_cols].iterrows()]
@@ -170,14 +165,24 @@ class MegaAnalyzerApp:
         bolas = self._get_filtered_data()
         if not bolas: return
         n = int(self.combo_size.get())
-        self._print(f"🔍 Combinações de {n} números:\n")
+        self._print(f" Buscando combinações de {n} números que se REPETEM...\n")
 
         counter = Counter()
         for jogo in bolas:
             for combo in combinations(jogo, n):
                 counter[tuple(sorted(combo))] += 1
 
-        for combo, freq in counter.most_common(15):
+        #  FILTRO CHAVE: Só mostra combinações que saíram 2 ou mais vezes
+        repeating = {k: v for k, v in counter.items() if v >= 2}
+        
+        if not repeating:
+            self._print(" Nenhuma combinação se repetiu neste período.")
+            self._print("💡 Dica: Aumente o intervalo de datas ou diminua a qtde de números juntos (ex: 2).")
+            return
+
+        # Ordena por frequência decrescente e pega os top 20
+        top = sorted(repeating.items(), key=lambda x: x[1], reverse=True)[:20]
+        for combo, freq in top:
             self._print(f"  {list(combo)} → {freq} vezes")
         self._print("")
 
@@ -205,7 +210,7 @@ class MegaAnalyzerApp:
         bolas = self._get_filtered_data()
         if not bolas: return
 
-        self._print("🎲 Jogos sugeridos:\n")
+        self._print(" Jogos sugeridos (baseados nos mais frequentes):\n")
         freq = Counter()
         for jogo in bolas:
             freq.update(jogo)
