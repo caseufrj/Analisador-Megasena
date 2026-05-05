@@ -27,7 +27,6 @@ class MegaAnalyzerApp:
         style.theme_use('clam')
         style.configure('TButton', padding=6, font=('Segoe UI', 10))
         style.configure('TLabel', font=('Segoe UI', 10))
-        style.configure('TEntry', padding=5)
         self.root.configure(bg='#f0f0f0')
 
         main = ttk.Frame(self.root, padding=15)
@@ -45,17 +44,19 @@ class MegaAnalyzerApp:
         filt_frame = ttk.LabelFrame(main, text="Filtros de Pesquisa", padding=10)
         filt_frame.pack(fill='x', pady=10)
 
-        # 📅 CALENDÁRIOS DE DATA
-        ttk.Label(filt_frame, text="Período (opcional):").grid(row=0, column=0, sticky='w')
+        # Calendários
+        ttk.Label(filt_frame, text="Período:").grid(row=0, column=0, sticky='w')
         
         self.cal_start = DateEntry(filt_frame, width=12, background='darkblue',
-                                   foreground='white', borderwidth=2, date_pattern='dd/mm/yyyy')
+                                   foreground='white', borderwidth=2, date_pattern='dd/mm/yyyy',
+                                   year=2023, month=1, day=1)
         self.cal_start.grid(row=0, column=1, padx=5)
         
         ttk.Label(filt_frame, text="até").grid(row=0, column=2)
         
         self.cal_end = DateEntry(filt_frame, width=12, background='darkblue',
-                                 foreground='white', borderwidth=2, date_pattern='dd/mm/yyyy')
+                                 foreground='white', borderwidth=2, date_pattern='dd/mm/yyyy',
+                                 year=2024, month=12, day=31)
         self.cal_end.grid(row=0, column=3, padx=5)
 
         ttk.Label(filt_frame, text="Números juntos:").grid(row=1, column=0, sticky='w', pady=(10,0))
@@ -72,16 +73,15 @@ class MegaAnalyzerApp:
         self.range_max.insert(0, "60")
         self.range_max.grid(row=1, column=5, padx=5, pady=(10,0))
 
-        # Toggle
         self.show_mode = tk.StringVar(value="repetidos")
-        ttk.Checkbutton(filt_frame, text="Mostrar TODAS as combinações (não só repetidas)", 
+        ttk.Checkbutton(filt_frame, text="Mostrar TODAS", 
                        variable=self.show_mode, onvalue="todos", offvalue="repetidos").grid(row=2, column=0, columnspan=6, sticky='w', pady=(10,0))
 
         # Botões
         btn_frame = ttk.Frame(main)
         btn_frame.pack(fill='x', pady=15)
-        ttk.Button(btn_frame, text="Analisar Repetições", command=self.run_combo_analysis).pack(side='left', padx=5)
-        ttk.Button(btn_frame, text="Analisar Faixa %", command=self.run_range_analysis).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="Analisar", command=self.run_combo_analysis).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="Faixa %", command=self.run_range_analysis).pack(side='left', padx=5)
         ttk.Button(btn_frame, text="Gerar Jogos", command=self.generate_games).pack(side='left', padx=5)
 
         # Resultados
@@ -124,19 +124,26 @@ class MegaAnalyzerApp:
                     break
             if not self.date_col:
                 for col in self.df.columns:
-                    if 'data' in str(col).lower() or 'sorteio' in str(col).lower():
+                    if 'data' in str(col).lower():
                         self.date_col = col
                         break
 
             if self.date_col:
                 self.df[self.date_col] = pd.to_datetime(self.df[self.date_col], format='%d/%m/%Y', errors='coerce')
                 self.df.dropna(subset=[self.date_col], inplace=True)
-                self._print(f"Coluna de  '{self.date_col}'")
+                
+                # Define datas padrão baseadas nos dados
+                min_date = self.df[self.date_col].min()
+                max_date = self.df[self.date_col].max()
+                self.cal_start.set_date(min_date)
+                self.cal_end.set_date(max_date)
+                
+                self._print(f"✅ {len(self.df)} sorteios carregados")
+                self._print(f"📅 Período: {min_date.strftime('%d/%m/%Y')} até {max_date.strftime('%d/%m/%Y')}\n")
             else:
-                self._print("Coluna de data não encontrada")
+                self._print("Coluna de data não encontrada\n")
 
             self.path_var.set(os.path.basename(file_path))
-            self._print(f"{len(self.df)} sorteios carregados.\n")
 
         except Exception as e:
             messagebox.showerror("Erro", f"Falha ao carregar:\n{e}")
@@ -146,25 +153,34 @@ class MegaAnalyzerApp:
             return None
         df_f = self.df.copy()
 
-        # 📅 Pega as datas dos calendários
         start_dt = self.cal_start.get_date()
         end_dt = self.cal_end.get_date()
 
+        self._print(f"🔍 Período selecionado: {start_dt.strftime('%d/%m/%Y')} até {end_dt.strftime('%d/%m/%Y')}")
+        
         if self.date_col:
+            min_data = self.df[self.date_col].min()
+            max_data = self.df[self.date_col].max()
+            self._print(f"📊 Dados disponíveis: {min_data.strftime('%d/%m/%Y')} até {max_data.strftime('%d/%m/%Y')}")
+            
             df_f = df_f[df_f[self.date_col] >= start_dt]
             df_f = df_f[df_f[self.date_col] <= end_dt]
 
         count = len(df_f)
+        self._print(f"✅ Sorteios encontrados: {count}\n")
+        
+        if count == 0:
+            self._print("❌ NENHUM sorteio neste período!")
+            self._print("💡 Ajuste as datas ou verifique se a planilha tem dados nesse intervalo\n")
+            return None
+
         return [sorted(row.astype(int)) for _, row in df_f[self.bolas_cols].iterrows()], count
 
     def run_combo_analysis(self):
         result = self._get_filtered_data()
         if not result: return
         bolas, total_jogos = result
-        if not bolas:
-            self._print("Nenhum sorteio no período.")
-            return
-            
+        
         n = int(self.combo_size.get())
         mode = self.show_mode.get()
         
@@ -176,59 +192,44 @@ class MegaAnalyzerApp:
             for combo in combinations(jogo, n):
                 counter[tuple(sorted(combo))] += 1
 
-        total_combos = len(counter)
-        
         if mode == "repetidos":
             filtered = {k: v for k, v in counter.items() if v >= 2}
             if not filtered:
-                self._print(f"Nenhuma combinação de {n} se repetiu.")
-                if total_jogos < 30:
-                    self._print(f"Dica: Em {total_jogos} jogos, é normal não haver repetições de {n}+ números.")
+                self._print(f"Nenhuma combinação de {n} se repetiu em {total_jogos} jogos.")
                 return
-            self._print(f"{len(filtered)} combinações se repetiram:\n")
-            display = sorted(filtered.items(), key=lambda x: x[1], reverse=True)
+            display = sorted(filtered.items(), key=lambda x: x[1], reverse=True)[:30]
         else:
-            self._print(f"Total de combinações únicas: {total_combos}\n")
-            self._print("Legenda: [REPETE] = 2+ vezes | [1x] = apenas uma vez\n")
             display = sorted(counter.items(), key=lambda x: x[1], reverse=True)[:50]
 
         for combo, freq in display:
             marker = " [REPETE]" if freq >= 2 else " [1x]"
             self._print(f"  {list(combo)} -> {freq}x{marker}")
-        
-        if mode == "todos":
-            repeating = sum(1 for v in counter.values() if v >= 2)
-            self._print(f"\nResumo: {repeating} repetiram | {total_combos - repeating} apareceram só 1 vez")
         self._print("")
 
     def run_range_analysis(self):
         result = self._get_filtered_data()
         if not result: return
         bolas, total_jogos = result
-        if not bolas: return
 
         try:
             r_min, r_max = int(self.range_min.get()), int(self.range_max.get())
-            if not (1 <= r_min < r_max <= 60): raise ValueError
         except:
-            messagebox.showwarning("Erro", "Faixa inválida.")
+            messagebox.showwarning("Erro", "Faixa inválida")
             return
 
-        self._print(f"Faixa {r_min}-{r_max} ({total_jogos} jogos):\n")
         total = total_jogos * 6
         na_faixa = sum(1 for jogo in bolas for n in jogo if r_min <= n <= r_max)
         
-        self._print(f"  Números na faixa: {na_faixa} de {total}")
-        self._print(f"  Porcentagem: {(na_faixa/total)*100:.2f}%")
-        self._print(f"  Média/jogo: {na_faixa/total_jogos:.2f}\n")
+        self._print(f"Faixa {r_min}-{r_max}:\n")
+        self._print(f"  Total: {na_faixa} de {total}")
+        self._print(f"  Porcentagem: {(na_faixa/total)*100:.2f}%\n")
 
     def generate_games(self):
         result = self._get_filtered_data()
         if not result: return
         bolas, total_jogos = result
-        if not bolas: return
 
-        self._print(f"Gerando 5 jogos (base: {total_jogos} sorteios):\n")
+        self._print(f"Gerando 5 jogos:\n")
         freq = Counter()
         for jogo in bolas: freq.update(jogo)
         
