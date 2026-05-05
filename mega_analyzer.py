@@ -8,19 +8,28 @@ import os
 import re
 from datetime import datetime
 from tkcalendar import DateEntry
+from openpyxl.utils import get_column_letter
 
 class MegaAnalyzerApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("🎲 Mega-Sena Analyzer Pro")
-        self.root.geometry("850x950")
+        self.root.title("Mega-Sena Analyzer Pro")
+        self.root.geometry("900x950")
         self.root.resizable(False, False)
 
         self.df = None
         self.bolas_cols = []
         self.date_col = None
-        self.range_stats = None  # Armazena análise de faixas
-        self.top_combos = {'2': [], '3': [], '4': []}  # Armazena combos frequentes
+        
+        # Dados armazenados para exportação
+        self.range_stats = None
+        self.top_combos = {'2': [], '3': [], '4': []}
+        self.session_data = {
+            'combos': None,      # Lista de (combo, freq)
+            'ranges': None,      # Dict com stats
+            'games': [],         # Lista de dicts
+            'meta': {}           # Configurações
+        }
 
         self._setup_ui()
 
@@ -39,7 +48,7 @@ class MegaAnalyzerApp:
         up_frame = ttk.Frame(main)
         up_frame.pack(fill='x', pady=(5, 15))
         self.path_var = tk.StringVar(value="Nenhuma planilha selecionada")
-        ttk.Label(up_frame, textvariable=self.path_var, wraplength=600).pack(side='left', fill='x', expand=True)
+        ttk.Label(up_frame, textvariable=self.path_var, wraplength=650).pack(side='left', fill='x', expand=True)
         ttk.Button(up_frame, text="Selecionar Arquivo", command=self.load_file).pack(side='right')
 
         # Filtros
@@ -70,16 +79,15 @@ class MegaAnalyzerApp:
         self.show_mode = tk.StringVar(value="repetidos")
         ttk.Checkbutton(filt_frame, text="Mostrar TODAS as combinações", variable=self.show_mode, onvalue="todos", offvalue="repetidos").grid(row=2, column=0, columnspan=6, sticky='w', pady=(10,0))
 
-        # Botões de Análise
+        # Botões
         btn_frame = ttk.Frame(main)
         btn_frame.pack(fill='x', pady=15)
         ttk.Button(btn_frame, text="🔍 Analisar Repetições", command=self.run_combo_analysis).pack(side='left', padx=5)
-        ttk.Button(btn_frame, text="📊 Analisar Faixa %", command=self.run_range_analysis).pack(side='left', padx=5)
-
-        # 🎲 Frame do Gerador
-        gen_frame = ttk.LabelFrame(main, text="🎲 Gerador Inteligente", padding=10)
-        gen_frame.pack(fill='x', pady=10)
-        ttk.Button(gen_frame, text="⚙️ Configurar e Gerar Jogos", command=self._open_generator_config, width=25).pack()
+        ttk.Button(btn_frame, text="📊 Analisar Faixas", command=self.run_range_analysis).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="️ Gerador", command=self._open_generator_config).pack(side='left', padx=5)
+        
+        # Botão de Exportação Global
+        ttk.Button(btn_frame, text="💾 Exportar Relatório Excel", command=self.export_to_excel).pack(side='right', padx=5)
 
         # Resultados
         res_frame = ttk.LabelFrame(main, text="📋 Resultados", padding=10)
@@ -123,7 +131,8 @@ class MegaAnalyzerApp:
                 self._print("⚠️ Coluna de data não encontrada\n")
 
             self.path_var.set(os.path.basename(file_path))
-            self.range_stats = None  # Resetar stats ao carregar novo arquivo
+            # Resetar dados da sessão ao carregar novo arquivo
+            self.session_data = {'combos': None, 'ranges': None, 'games': [], 'meta': {}}
         except Exception as e:
             messagebox.showerror("Erro", f"Falha ao carregar:\n{e}")
 
@@ -139,6 +148,15 @@ class MegaAnalyzerApp:
         if count == 0:
             self._print("❌ Nenhum sorteio encontrado no período selecionado.\n")
             return None
+        
+        # Atualizar metadados para exportação
+        self.session_data['meta'] = {
+            "Periodo_Inicio": start_dt.strftime("%d/%m/%Y"),
+            "Periodo_Fim": end_dt.strftime("%d/%m/%Y"),
+            "Total_Sorteios_Analisados": count,
+            "Data_Analise": datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        }
+        
         return [sorted(row.astype(int)) for _, row in df_f[self.bolas_cols].iterrows()], count
 
     def run_combo_analysis(self):
@@ -154,8 +172,11 @@ class MegaAnalyzerApp:
             for combo in combinations(jogo, n):
                 counter[tuple(sorted(combo))] += 1
 
-        # Armazenar top combos para o gerador
-        self.top_combos[str(n)] = [c for c, _ in counter.most_common(30)]
+        # Salvar para uso no gerador (top 30)
+        self.top_combos[str(n)] = counter.most_common(30)
+        
+        # 💾 Salvar para exportação (Top 50 mais completas)
+        self.session_data['combos'] = counter.most_common(50)
 
         filtered = counter if mode == 'todos' else {k:v for k,v in counter.items() if v>=2}
         if not filtered:
@@ -172,42 +193,35 @@ class MegaAnalyzerApp:
         if not result: return
         bolas, total_jogos = result
 
-        # Cálculo automático 10 em 10
         ranges_10 = [(1,10), (11,20), (21,30), (31,40), (41,50), (51,60)]
-        stats_10 = []
-        for r in ranges_10:
-            cnt = sum(1 for j in bolas for n in j if r[0] <= n <= r[1])
-            stats_10.append({'range': f"{r[0]}-{r[1]}", 'avg': round(cnt/total_jogos, 2), 'total': cnt})
+        stats_10 = [{'Faixa': f"{r[0]}-{r[1]}", 'Média_por_Jogo': round(sum(1 for j in bolas for n in j if r[0] <= n <= r[1])/total_jogos, 2)} for r in ranges_10]
 
-        # Cálculo automático 20 em 20
         ranges_20 = [(1,20), (21,40), (41,60)]
-        stats_20 = []
-        for r in ranges_20:
-            cnt = sum(1 for j in bolas for n in j if r[0] <= n <= r[1])
-            stats_20.append({'range': f"{r[0]}-{r[1]}", 'avg': round(cnt/total_jogos, 2), 'total': cnt})
+        stats_20 = [{'Faixa': f"{r[0]}-{r[1]}", 'Média_por_Jogo': round(sum(1 for j in bolas for n in j if r[0] <= n <= r[1])/total_jogos, 2)} for r in ranges_20]
 
         self.range_stats = {'step10': stats_10, 'step20': stats_20}
+        
+        # 💾 Salvar para exportação
+        self.session_data['ranges'] = {'step10': stats_10, 'step20': stats_20}
 
         self._print("📊 ANÁLISE AUTOMÁTICA DE DISTRIBUIÇÃO POR FAIXAS:\n")
         self._print("🔹 Faixas de 10 em 10 (Média por jogo):")
-        for s in stats_10:
-            self._print(f"   {s['range']}: {s['avg']} números")
-        self._print("\n Faixas de 20 em 20 (Média por jogo):")
-        for s in stats_20:
-            self._print(f"   {s['range']}: {s['avg']} números")
-        self._print("\n Clique em '⚙️ Configurar e Gerar Jogos' para usar esses padrões.\n")
+        for s in stats_10: self._print(f"   {s['Faixa']}: {s['Média_por_Jogo']} números")
+        self._print("\n 🔹 Faixas de 20 em 20 (Média por jogo):")
+        for s in stats_20: self._print(f"   {s['Faixa']}: {s['Média_por_Jogo']} números")
+        self._print("")
 
     def _open_generator_config(self):
         if self.df is None:
             messagebox.showwarning("Aviso", "Carregue uma planilha primeiro.")
             return
         if not self.range_stats:
-            if not messagebox.askyesno("Aviso", "Você ainda não clicou em 'Analisar Faixa %'. Deseja continuar com padrões padrão?"):
+            if not messagebox.askyesno("Aviso", "Você ainda não clicou em 'Analisar Faixas'. Deseja continuar com padrões padrão?"):
                 return
 
         win = tk.Toplevel(self.root)
         win.title("⚙️ Configuração do Gerador")
-        win.geometry("420x520")
+        win.geometry("460x580")
         win.resizable(False, False)
         win.transient(self.root)
         win.grab_set()
@@ -225,109 +239,163 @@ class MegaAnalyzerApp:
         ttk.Checkbutton(win, text="✅ Triplas (3 números)", variable=u_tripla).pack(anchor='w', padx=30)
         ttk.Checkbutton(win, text="Quadras (4 números)", variable=u_quadra).pack(anchor='w', padx=30)
 
+        focus_top_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(win, text="🔒 Focar apenas nas TOP combinações", variable=focus_top_var).pack(anchor='w', padx=30, pady=(5,0))
+
         ttk.Label(win, text="Distribuição por Faixas:", font=('Segoe UI', 10, 'bold')).pack(anchor='w', padx=15, pady=(15,0))
         dist_var = tk.StringVar(value="historico")
-        ttk.Radiobutton(win, text=" Padrão histórico (mais frequente)", variable=dist_var, value="historico").pack(anchor='w', padx=30)
-        ttk.Radiobutton(win, text="📏 Faixas de 10 em 10 (1-10, 11-20...)", variable=dist_var, value="step10").pack(anchor='w', padx=30)
-        ttk.Radiobutton(win, text="📐 Faixas de 20 em 20 (1-20, 21-40...)", variable=dist_var, value="step20").pack(anchor='w', padx=30)
+        ttk.Radiobutton(win, text="🤖 Padrão histórico (mais frequente)", variable=dist_var, value="historico").pack(anchor='w', padx=30)
+        ttk.Radiobutton(win, text="📏 Faixas de 10 em 10", variable=dist_var, value="step10").pack(anchor='w', padx=30)
+        ttk.Radiobutton(win, text="📐 Faixas de 20 em 20", variable=dist_var, value="step20").pack(anchor='w', padx=30)
 
         ttk.Button(win, text="🎲 GERAR JOGOS AGORA", command=lambda: self.generate_smart_games(
-            int(qtd_spin.get()), u_dupla.get(), u_tripla.get(), u_quadra.get(), dist_var.get(), win
+            int(qtd_spin.get()), u_dupla.get(), u_tripla.get(), u_quadra.get(), dist_var.get(), focus_top_var.get(), win
         )).pack(pady=25, fill='x', padx=20)
 
-    def generate_smart_games(self, qtd, use_dupla, use_tripla, use_quadra, dist_mode, config_win):
+    def generate_smart_games(self, qtd, use_dupla, use_tripla, use_quadra, dist_mode, focus_top, config_win):
         result = self._get_filtered_data()
         if not result: return
         bolas, total_jogos = result
         config_win.destroy()
 
         self._print(f"🎲 GERANDO {qtd} JOGOS INTELIGENTES...\n")
-        self._print(f"Base: {total_jogos} sorteios | Combinações: Dupla={use_dupla}, Tripla={use_tripla}, Quadra={use_quadra}")
-        self._print(f"Distribuição: {dist_mode}\n")
-
-        # 1. Pool de combinações
+        
+        # Pool ponderado
         combo_pool = []
-        if use_dupla: combo_pool.extend(self.top_combos.get('2', []))
-        if use_tripla: combo_pool.extend(self.top_combos.get('3', []))
-        if use_quadra: combo_pool.extend(self.top_combos.get('4', []))
-        if not combo_pool:
-            self._print("⚠️ Nenhuma combinação selecionada. Usando frequência simples.\n")
+        weights = []
+        limit = 5 if focus_top else 30
+        
+        if use_dupla and self.top_combos.get('2'):
+            for c, f in self.top_combos['2'][:limit]: combo_pool.append(c); weights.append(f)
+        if use_tripla and self.top_combos.get('3'):
+            for c, f in self.top_combos['3'][:limit]: combo_pool.append(c); weights.append(f)
+        if use_quadra and self.top_combos.get('4'):
+            for c, f in self.top_combos['4'][:limit]: combo_pool.append(c); weights.append(f)
 
-        # 2. Definir alvos de faixa
-        targets = []
+        targets, ranges = [], []
         if dist_mode == "historico" and self.range_stats:
-            # Pega o step que teve maior aderência histórica (soma dos averages mais próxima de 6)
-            s10_sum = sum(s['avg'] for s in self.range_stats['step10'])
-            s20_sum = sum(s['avg'] for s in self.range_stats['step20'])
+            s10_sum = sum(s['Média_por_Jogo'] for s in self.range_stats['step10'])
+            s20_sum = sum(s['Média_por_Jogo'] for s in self.range_stats['step20'])
             chosen = 'step10' if abs(s10_sum - 6) < abs(s20_sum - 6) else 'step20'
             stats = self.range_stats[chosen]
-            targets = [s['avg'] for s in stats]
+            targets = [s['Média_por_Jogo'] for s in stats]
             ranges = [(1,10), (11,20), (21,30), (31,40), (41,50), (51,60)] if chosen=='step10' else [(1,20), (21,40), (41,60)]
-            self._print(f"📊 Usando padrão histórico ({chosen}): {targets}\n")
-        elif dist_mode == "step10":
-            targets = [1.0]*6
-            ranges = [(1,10), (11,20), (21,30), (31,40), (41,50), (51,60)]
-        elif dist_mode == "step20":
-            targets = [2.0, 2.0, 2.0]
-            ranges = [(1,20), (21,40), (41,60)]
-        else:
-            targets = [1.0]*6
-            ranges = [(1,10), (11,20), (21,30), (31,40), (41,50), (51,60)]
+        elif dist_mode == "step10": targets, ranges = [1.0]*6, [(1,10), (11,20), (21,30), (31,40), (41,50), (51,60)]
+        elif dist_mode == "step20": targets, ranges = [2.0, 2.0, 2.0], [(1,20), (21,40), (41,60)]
+        else: targets, ranges = [1.0]*6, [(1,10), (11,20), (21,30), (31,40), (41,50), (51,60)]
 
-        # Frequência individual para fallback
         freq_individual = Counter()
         for j in bolas: freq_individual.update(j)
         hot_numbers = [n for n, _ in freq_individual.most_common(30)]
 
-        # 3. Geração
         jogos_gerados = set()
+        generated_list = []
         tentativas = 0
-        while len(jogos_gerados) < qtd and tentativas < qtd * 200:
+
+        while len(jogos_gerados) < qtd and tentativas < qtd * 300:
             tentativas += 1
             jogo = []
+            seed_combo = None
+            seed_freq = 0
 
-            # Semente de combinação
-            if combo_pool and random.random() < 0.75:
-                seed = random.choice(combo_pool)
-                jogo = list(seed)
+            if combo_pool and random.random() < 0.80:
+                chosen_idx = random.choices(range(len(combo_pool)), weights=weights, k=1)[0]
+                seed_combo = combo_pool[chosen_idx]
+                seed_freq = weights[chosen_idx]
+                jogo = list(seed_combo)
 
-            # Preencher até 6 números respeitando faixas
             while len(jogo) < 6:
-                # Determinar qual faixa precisa de número
                 current_dist = [0]*len(targets)
                 for n in jogo:
                     for i, (min_v, max_v) in enumerate(ranges):
-                        if min_v <= n <= max_v:
-                            current_dist[i] += 1
+                        if min_v <= n <= max_v: current_dist[i] += 1
                 
-                # Escolher faixa com maior déficit
                 deficits = [targets[i] - current_dist[i] for i in range(len(targets))]
                 best_idx = deficits.index(max(deficits))
                 min_v, max_v = ranges[best_idx]
 
-                # Buscar número quente nessa faixa
                 candidatos = [n for n in hot_numbers if min_v <= n <= max_v and n not in jogo]
-                if not candidatos:
-                    candidatos = [n for n in range(1, 61) if min_v <= n <= max_v and n not in jogo]
+                if not candidatos: candidatos = [n for n in range(1, 61) if min_v <= n <= max_v and n not in jogo]
                 
-                if candidatos:
-                    jogo.append(random.choice(candidatos))
-                else:
-                    break # Fallback se não achar
+                if candidatos: jogo.append(random.choice(candidatos))
+                else: break
 
             if len(jogo) == 6:
                 t_jogo = tuple(sorted(jogo))
                 if t_jogo not in jogos_gerados:
                     jogos_gerados.add(t_jogo)
+                    generated_list.append({
+                        "Jogo": len(generated_list) + 1,
+                        "Bola1": t_jogo[0], "Bola2": t_jogo[1], "Bola3": t_jogo[2],
+                        "Bola4": t_jogo[3], "Bola5": t_jogo[4], "Bola6": t_jogo[5],
+                        "Semente": str(list(seed_combo)) if seed_combo else "Aleatória",
+                        "Freq_Semente": seed_freq if seed_combo else 0
+                    })
 
-        # 4. Saída
-        if jogos_gerados:
-            self._print(f"✅ {len(jogos_gerados)} JOGOS GERADOS:\n")
-            for i, j in enumerate(sorted(jogos_gerados), 1):
-                self._print(f"  Jogo {i:2d}: {list(j)}")
-            self._print(f"\n Tentativas: {tentativas} | Jogos únicos: {len(jogos_gerados)}")
+        # 💾 Salvar no estado global
+        self.session_data['games'] = generated_list
+        self.session_data['meta']['Jogos_Gerados'] = qtd
+        self.session_data['meta']['Modo_Distribuicao'] = dist_mode
+
+        # Saída
+        if generated_list:
+            self._print(f"✅ {len(generated_list)} JOGOS GERADOS:\n")
+            for item in generated_list:
+                self._print(f"  Jogo {item['Jogo']:2d}: [{item['Bola1']}, {item['Bola2']}, {item['Bola3']}, {item['Bola4']}, {item['Bola5']}, {item['Bola6']}]")
+            self._print(f"\n 💾 Clique em 'Exportar Relatório Excel' para salvar TUDO (Jogos + Análises).\n")
         else:
-            self._print(" Não foi possível gerar jogos únicos com essas restrições.\n")
+            self._print("❌ Não foi possível gerar jogos únicos com essas restrições.\n")
+
+    def export_to_excel(self):
+        if all(v is None or v == [] for v in [self.session_data['combos'], self.session_data['ranges'], self.session_data['games']]):
+            messagebox.showwarning("Exportar", "Nenhuma análise ou jogo foi realizado nesta sessão.")
+            return
+
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Excel Workbook", "*.xlsx")],
+            initialfile=f"Relatorio_MegaSena_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+        )
+        if not file_path: return
+
+        try:
+            with pd.ExcelWriter(file_path, engine='openpyxl') as writer:
+                # 1. Aba Configuração
+                if self.session_data['meta']:
+                    df_meta = pd.DataFrame(list(self.session_data['meta'].items()), columns=['Parâmetro', 'Valor'])
+                    df_meta.to_excel(writer, sheet_name='Configuração', index=False)
+
+                # 2. Aba Jogos Gerados
+                if self.session_data['games']:
+                    pd.DataFrame(self.session_data['games']).to_excel(writer, sheet_name='Jogos Gerados', index=False)
+
+                # 3. Aba Combinações
+                if self.session_data['combos']:
+                    # Transforma lista de tupas ((n1,n2), freq) em DataFrame
+                    df_combos = pd.DataFrame(
+                        [(str(list(c)), f) for c, f in self.session_data['combos']],
+                        columns=['Combinação', 'Frequência']
+                    )
+                    df_combos.to_excel(writer, sheet_name='Análise Combinações', index=False)
+
+                # 4. Aba Faixas
+                if self.session_data['ranges']:
+                    df_10 = pd.DataFrame(self.session_data['ranges']['step10'])
+                    df_20 = pd.DataFrame(self.session_data['ranges']['step20'])
+                    
+                    # Escreve os dois na mesma aba (espaçados)
+                    df_10.to_excel(writer, sheet_name='Análise Faixas', index=False, startrow=0)
+                    df_20.to_excel(writer, sheet_name='Análise Faixas', index=False, startrow=8)
+
+                # Ajustar largura de colunas automaticamente
+                for sheet in writer.sheets.values():
+                    for idx, col in enumerate(sheet.columns, 1):
+                        max_length = max(len(str(cell.value)) for cell in col)
+                        sheet.column_dimensions[get_column_letter(idx)].width = max_length + 4
+
+            messagebox.showinfo("Sucesso", f"Relatório completo salvo!\n📂 {file_path}")
+        except Exception as e:
+            messagebox.showerror("Erro", f"Falha ao exportar:\n{e}")
 
     def _print(self, text):
         self.text_res.config(state='normal')
