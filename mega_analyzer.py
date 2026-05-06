@@ -24,11 +24,14 @@ class MegaAnalyzerApp:
         # Dados armazenados para exportação
         self.range_stats = None
         self.top_combos = {'2': [], '3': [], '4': []}
+        self.freq_tiers = None  # {'high': [], 'medium': [], 'low': []}
+        self.freq_pattern = None  # Padrão histórico (ex: [2,2,2])
         self.session_data = {
             'combos': None,
             'ranges': None,
             'games': [],
             'frequency': None,
+            'freq_comparison': None,
             'meta': {}
         }
 
@@ -86,6 +89,7 @@ class MegaAnalyzerApp:
         ttk.Button(btn_frame, text="🔍 Repetições", command=self.run_combo_analysis).pack(side='left', padx=5)
         ttk.Button(btn_frame, text=" Faixas", command=self.run_range_analysis).pack(side='left', padx=5)
         ttk.Button(btn_frame, text="🔢 Frequência", command=self.run_frequency_analysis).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="📊 Comparar Freq", command=self.run_frequency_comparison).pack(side='left', padx=5)
         ttk.Button(btn_frame, text="🎲 Gerador", command=self._open_generator_config).pack(side='left', padx=5)
         ttk.Button(btn_frame, text=" Exportar Excel", command=self.export_to_excel).pack(side='right', padx=5)
 
@@ -131,7 +135,9 @@ class MegaAnalyzerApp:
                 self._print("⚠️ Coluna de data não encontrada\n")
 
             self.path_var.set(os.path.basename(file_path))
-            self.session_data = {'combos': None, 'ranges': None, 'games': [], 'frequency': None, 'meta': {}}
+            self.session_data = {'combos': None, 'ranges': None, 'games': [], 'frequency': None, 'freq_comparison': None, 'meta': {}}
+            self.freq_tiers = None
+            self.freq_pattern = None
         except Exception as e:
             messagebox.showerror("Erro", f"Falha ao carregar:\n{e}")
 
@@ -164,7 +170,7 @@ class MegaAnalyzerApp:
         n = int(self.combo_size.get())
         mode = self.show_mode.get()
         
-        self._print(f" Analisando {total} jogos | Combinações de {n} números | Modo: {'TODAS' if mode=='todos' else 'REPETIDAS'}\n")
+        self._print(f"🔍 Analisando {total} jogos | Combinações de {n} números | Modo: {'TODAS' if mode=='todos' else 'REPETIDAS'}\n")
         counter = Counter()
         for jogo in bolas:
             for combo in combinations(jogo, n):
@@ -197,10 +203,10 @@ class MegaAnalyzerApp:
         self.range_stats = {'step10': stats_10, 'step20': stats_20}
         self.session_data['ranges'] = {'step10': stats_10, 'step20': stats_20}
 
-        self._print(" ANÁLISE AUTOMÁTICA DE DISTRIBUIÇÃO POR FAIXAS:\n")
+        self._print("📊 ANÁLISE AUTOMÁTICA DE DISTRIBUIÇÃO POR FAIXAS:\n")
         self._print("🔹 Faixas de 10 em 10 (Média por jogo):")
         for s in stats_10: self._print(f"   {s['Faixa']}: {s['Média_por_Jogo']} números")
-        self._print("\n 🔹 Faixas de 20 em 20 (Média por jogo):")
+        self._print("\n🔹 Faixas de 20 em 20 (Média por jogo):")
         for s in stats_20: self._print(f"   {s['Faixa']}: {s['Média_por_Jogo']} números")
         self._print("")
 
@@ -217,7 +223,7 @@ class MegaAnalyzerApp:
         sorted_freq = sorted(full_freq.items(), key=lambda x: x[1], reverse=True)
         total_nums = total_jogos * 6
 
-        self._print(f" FREQUÊNCIA POR NÚMERO ({total_jogos} jogos | {total_nums} números sorteados)\n")
+        self._print(f"🔢 FREQUÊNCIA POR NÚMERO ({total_jogos} jogos | {total_nums} números sorteados)\n")
         self._print("🔥 TOP 10 MAIS FREQUENTES:")
         for num, count in sorted_freq[:10]:
             pct = (count / total_nums) * 100
@@ -237,17 +243,69 @@ class MegaAnalyzerApp:
         self.session_data['frequency'] = sorted_freq
         self.session_data['meta']['Total_Numeros_Analisados'] = total_nums
 
+    def run_frequency_comparison(self):
+        """Análise comparativa: quantos números de cada tier (alta/média/baixa) aparecem nos sorteios"""
+        result = self._get_filtered_data()
+        if not result: return
+        bolas, total_jogos = result
+
+        # 1. Calcular frequência e criar tiers
+        freq = Counter()
+        for jogo in bolas:
+            freq.update(jogo)
+        
+        sorted_nums = sorted(freq.items(), key=lambda x: x[1], reverse=True)
+        
+        # Dividir em 3 tiers: top 20, middle 20, bottom 20
+        high_tier = [n for n, _ in sorted_nums[:20]]
+        medium_tier = [n for n, _ in sorted_nums[20:40]]
+        low_tier = [n for n, _ in sorted_nums[40:]]
+        
+        self.freq_tiers = {'high': set(high_tier), 'medium': set(medium_tier), 'low': set(low_tier)}
+
+        # 2. Analisar cada sorteio histórico
+        pattern_counter = Counter()
+        for jogo in bolas:
+            h = sum(1 for n in jogo if n in self.freq_tiers['high'])
+            m = sum(1 for n in jogo if n in self.freq_tiers['medium'])
+            l = sum(1 for n in jogo if n in self.freq_tiers['low'])
+            pattern_counter[(h, m, l)] += 1
+
+        # 3. Encontrar padrão mais comum
+        most_common = pattern_counter.most_common(5)
+        self.freq_pattern = most_common[0][0] if most_common else (2, 2, 2)
+
+        # 4. Exibir resultados
+        self._print(f"📊 COMPARATIVO DE FREQUÊNCIA POR TIER ({total_jogos} jogos)\n")
+        self._print("🔹 Classificação dos números:")
+        self._print(f"   🔥 Alta (Top 20): {sorted(high_tier)}")
+        self._print(f"   ⚡ Média (20-40): {sorted(medium_tier)}")
+        self._print(f"   ❄️ Baixa (40-60): {sorted(low_tier)}\n")
+
+        self._print("🔹 Padrões encontrados nos sorteios (High, Medium, Low):")
+        for pattern, count in most_common:
+            pct = (count / total_jogos) * 100
+            marker = " ✅ MAIS COMUM" if pattern == self.freq_pattern else ""
+            self._print(f"   {pattern} → {count} jogos ({pct:.1f}%){marker}")
+
+        self._print(f"\n💡 Padrão selecionado para o gerador: {self.freq_pattern}")
+        self._print(f"   (Ex: {self.freq_pattern[0]} altos + {self.freq_pattern[1]} médios + {self.freq_pattern[2]} baixos)\n")
+
+        # Salvar para exportação
+        self.session_data['freq_comparison'] = {
+            'tiers': {'high': high_tier, 'medium': medium_tier, 'low': low_tier},
+            'patterns': most_common,
+            'selected_pattern': self.freq_pattern
+        }
+
     def _open_generator_config(self):
         if self.df is None:
             messagebox.showwarning("Aviso", "Carregue uma planilha primeiro.")
             return
-        if not self.range_stats:
-            if not messagebox.askyesno("Aviso", "Você ainda não clicou em 'Analisar Faixas'. Deseja continuar com padrões padrão?"):
-                return
 
         win = tk.Toplevel(self.root)
         win.title("⚙️ Configuração do Gerador")
-        win.geometry("460x580")
+        win.geometry("500x680")
         win.resizable(False, False)
         win.transient(self.root)
         win.grab_set()
@@ -270,15 +328,24 @@ class MegaAnalyzerApp:
 
         ttk.Label(win, text="Distribuição por Faixas:", font=('Segoe UI', 10, 'bold')).pack(anchor='w', padx=15, pady=(15,0))
         dist_var = tk.StringVar(value="historico")
-        ttk.Radiobutton(win, text=" Padrão histórico (mais frequente)", variable=dist_var, value="historico").pack(anchor='w', padx=30)
+        ttk.Radiobutton(win, text="🤖 Padrão histórico (mais frequente)", variable=dist_var, value="historico").pack(anchor='w', padx=30)
         ttk.Radiobutton(win, text="📏 Faixas de 10 em 10", variable=dist_var, value="step10").pack(anchor='w', padx=30)
         ttk.Radiobutton(win, text="📐 Faixas de 20 em 20", variable=dist_var, value="step20").pack(anchor='w', padx=30)
 
-        ttk.Button(win, text=" GERAR JOGOS AGORA", command=lambda: self.generate_smart_games(
-            int(qtd_spin.get()), u_dupla.get(), u_tripla.get(), u_quadra.get(), dist_var.get(), focus_top_var.get(), win
+        # 🆕 Novo: Filtro por padrão de frequência
+        use_freq_pattern_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(win, text="🎯 Usar padrão de frequência (Alta/Média/Baixa)", 
+                       variable=use_freq_pattern_var).pack(anchor='w', padx=30, pady=(10,0))
+        if self.freq_pattern:
+            ttk.Label(win, text=f"   Padrão detectado: {self.freq_pattern[0]}🔥 + {self.freq_pattern[1]}⚡ + {self.freq_pattern[2]}❄️", 
+                     font=('Segoe UI', 9)).pack(anchor='w', padx=45)
+
+        ttk.Button(win, text="🎲 GERAR JOGOS AGORA", command=lambda: self.generate_smart_games(
+            int(qtd_spin.get()), u_dupla.get(), u_tripla.get(), u_quadra.get(), 
+            dist_var.get(), focus_top_var.get(), use_freq_pattern_var.get(), win
         )).pack(pady=25, fill='x', padx=20)
 
-    def generate_smart_games(self, qtd, use_dupla, use_tripla, use_quadra, dist_mode, focus_top, config_win):
+    def generate_smart_games(self, qtd, use_dupla, use_tripla, use_quadra, dist_mode, focus_top, use_freq_pattern, config_win):
         result = self._get_filtered_data()
         if not result: return
         bolas, total_jogos = result
@@ -286,6 +353,7 @@ class MegaAnalyzerApp:
 
         self._print(f"🎲 GERANDO {qtd} JOGOS INTELIGENTES...\n")
         
+        # Pool ponderado de combinações
         combo_pool = []
         weights = []
         limit = 5 if focus_top else 30
@@ -297,6 +365,7 @@ class MegaAnalyzerApp:
         if use_quadra and self.top_combos.get('4'):
             for c, f in self.top_combos['4'][:limit]: combo_pool.append(c); weights.append(f)
 
+        # Configurar alvos de faixa numérica
         targets, ranges = [], []
         if dist_mode == "historico" and self.range_stats:
             s10_sum = sum(s['Média_por_Jogo'] for s in self.range_stats['step10'])
@@ -309,42 +378,88 @@ class MegaAnalyzerApp:
         elif dist_mode == "step20": targets, ranges = [2.0, 2.0, 2.0], [(1,20), (21,40), (41,60)]
         else: targets, ranges = [1.0]*6, [(1,10), (11,20), (21,30), (31,40), (41,50), (51,60)]
 
+        # Frequência individual para fallback
         freq_individual = Counter()
         for j in bolas: freq_individual.update(j)
         hot_numbers = [n for n, _ in freq_individual.most_common(30)]
 
+        # Configurar tiers de frequência se ativado
+        tier_targets = None
+        if use_freq_pattern and self.freq_tiers and self.freq_pattern:
+            tier_targets = list(self.freq_pattern)  # Ex: [2, 2, 2]
+            self._print(f"🎯 Filtro de frequência ativado: {tier_targets[0]}🔥 + {tier_targets[1]}⚡ + {tier_targets[2]}❄️\n")
+
+        # Geração dos jogos
         jogos_gerados = set()
         generated_list = []
         tentativas = 0
 
-        while len(jogos_gerados) < qtd and tentativas < qtd * 300:
+        while len(jogos_gerados) < qtd and tentativas < qtd * 400:
             tentativas += 1
             jogo = []
             seed_combo = None
             seed_freq = 0
 
+            # Selecionar semente de combinação
             if combo_pool and random.random() < 0.80:
                 chosen_idx = random.choices(range(len(combo_pool)), weights=weights, k=1)[0]
                 seed_combo = combo_pool[chosen_idx]
                 seed_freq = weights[chosen_idx]
                 jogo = list(seed_combo)
 
+            # Preencher jogo respeitando filtros
             while len(jogo) < 6:
-                current_dist = [0]*len(targets)
-                for n in jogo:
-                    for i, (min_v, max_v) in enumerate(ranges):
-                        if min_v <= n <= max_v: current_dist[i] += 1
-                
-                deficits = [targets[i] - current_dist[i] for i in range(len(targets))]
-                best_idx = deficits.index(max(deficits))
-                min_v, max_v = ranges[best_idx]
+                # 1. Verificar filtro de tiers de frequência (se ativado)
+                if tier_targets and self.freq_tiers:
+                    current_tiers = [
+                        sum(1 for n in jogo if n in self.freq_tiers['high']),
+                        sum(1 for n in jogo if n in self.freq_tiers['medium']),
+                        sum(1 for n in jogo if n in self.freq_tiers['low'])
+                    ]
+                    # Escolher tier com maior déficit
+                    deficits = [tier_targets[i] - current_tiers[i] for i in range(3)]
+                    if max(deficits) > 0:
+                        best_tier_idx = deficits.index(max(deficits))
+                        if best_tier_idx == 0:
+                            candidatos = [n for n in self.freq_tiers['high'] if n not in jogo]
+                        elif best_tier_idx == 1:
+                            candidatos = [n for n in self.freq_tiers['medium'] if n not in jogo]
+                        else:
+                            candidatos = [n for n in self.freq_tiers['low'] if n not in jogo]
+                        
+                        if candidatos:
+                            # Priorizar números quentes dentro do tier
+                            hot_in_tier = [n for n in candidatos if n in hot_numbers]
+                            escolha = random.choice(hot_in_tier if hot_in_tier else candidatos)
+                            jogo.append(escolha)
+                            continue
 
-                candidatos = [n for n in hot_numbers if min_v <= n <= max_v and n not in jogo]
-                if not candidatos: candidatos = [n for n in range(1, 61) if min_v <= n <= max_v and n not in jogo]
-                
-                if candidatos: jogo.append(random.choice(candidatos))
-                else: break
+                # 2. Verificar filtro de faixas numéricas
+                if ranges:
+                    current_dist = [0]*len(targets)
+                    for n in jogo:
+                        for i, (min_v, max_v) in enumerate(ranges):
+                            if min_v <= n <= max_v: current_dist[i] += 1
+                    
+                    deficits = [targets[i] - current_dist[i] for i in range(len(targets))]
+                    if max(deficits) > 0:
+                        best_idx = deficits.index(max(deficits))
+                        min_v, max_v = ranges[best_idx]
+                        candidatos = [n for n in hot_numbers if min_v <= n <= max_v and n not in jogo]
+                        if not candidatos:
+                            candidatos = [n for n in range(1, 61) if min_v <= n <= max_v and n not in jogo]
+                        if candidatos:
+                            jogo.append(random.choice(candidatos))
+                            continue
 
+                # 3. Fallback: qualquer número quente disponível
+                candidatos = [n for n in hot_numbers if n not in jogo]
+                if not candidatos:
+                    candidatos = [n for n in range(1, 61) if n not in jogo]
+                if candidatos:
+                    jogo.append(random.choice(candidatos))
+
+            # Validar e salvar jogo
             if len(jogo) == 6:
                 t_jogo = tuple(sorted(jogo))
                 if t_jogo not in jogos_gerados:
@@ -354,23 +469,28 @@ class MegaAnalyzerApp:
                         "Bola1": t_jogo[0], "Bola2": t_jogo[1], "Bola3": t_jogo[2],
                         "Bola4": t_jogo[3], "Bola5": t_jogo[4], "Bola6": t_jogo[5],
                         "Semente": str(list(seed_combo)) if seed_combo else "Aleatória",
-                        "Freq_Semente": seed_freq if seed_combo else 0
+                        "Freq_Semente": seed_freq if seed_combo else 0,
+                        "Distrib_Freq": f"{sum(1 for n in t_jogo if n in (self.freq_tiers['high'] or set()))}🔥+{sum(1 for n in t_jogo if n in (self.freq_tiers['medium'] or set()))}⚡+{sum(1 for n in t_jogo if n in (self.freq_tiers['low'] or set()))}❄️" if use_freq_pattern else "-"
                     })
 
+        # Salvar para exportação
         self.session_data['games'] = generated_list
         self.session_data['meta']['Jogos_Gerados'] = qtd
         self.session_data['meta']['Modo_Distribuicao'] = dist_mode
+        self.session_data['meta']['Usar_Padrao_Frequencia'] = "Sim" if use_freq_pattern else "Não"
 
+        # Exibir resultados
         if generated_list:
             self._print(f"✅ {len(generated_list)} JOGOS GERADOS:\n")
             for item in generated_list:
-                self._print(f"  Jogo {item['Jogo']:2d}: [{item['Bola1']}, {item['Bola2']}, {item['Bola3']}, {item['Bola4']}, {item['Bola5']}, {item['Bola6']}]")
-            self._print(f"\n 💾 Clique em 'Exportar Excel' para salvar TUDO.\n")
+                freq_info = f" | {item['Distrib_Freq']}" if use_freq_pattern and item['Distrib_Freq'] != "-" else ""
+                self._print(f"  Jogo {item['Jogo']:2d}: [{item['Bola1']}, {item['Bola2']}, {item['Bola3']}, {item['Bola4']}, {item['Bola5']}, {item['Bola6']}]{freq_info}")
+            self._print(f"\n💾 Clique em 'Exportar Excel' para salvar TUDO.\n")
         else:
             self._print("❌ Não foi possível gerar jogos únicos com essas restrições.\n")
 
     def export_to_excel(self):
-        if all(v is None or v == [] for v in [self.session_data['combos'], self.session_data['ranges'], self.session_data['games'], self.session_data['frequency']]):
+        if all(v is None or v == [] for v in [self.session_data['combos'], self.session_data['ranges'], self.session_data['games'], self.session_data['frequency'], self.session_data['freq_comparison']]):
             messagebox.showwarning("Exportar", "Nenhuma análise foi realizada nesta sessão.")
             return
 
@@ -383,25 +503,54 @@ class MegaAnalyzerApp:
 
         try:
             with pd.ExcelWriter(file_path, engine='openpyxl') as writer:
+                # Aba Configuração
                 if self.session_data['meta']:
                     pd.DataFrame(list(self.session_data['meta'].items()), columns=['Parâmetro', 'Valor']).to_excel(writer, sheet_name='Configuração', index=False)
+                
+                # Aba Jogos Gerados
                 if self.session_data['games']:
                     pd.DataFrame(self.session_data['games']).to_excel(writer, sheet_name='Jogos Gerados', index=False)
+                
+                # Aba Combinações
                 if self.session_data['combos']:
                     pd.DataFrame([(str(list(c)), f) for c, f in self.session_data['combos']], columns=['Combinação', 'Frequência']).to_excel(writer, sheet_name='Análise Combinações', index=False)
+                
+                # Aba Faixas
                 if self.session_data['ranges']:
                     pd.DataFrame(self.session_data['ranges']['step10']).to_excel(writer, sheet_name='Análise Faixas', index=False, startrow=0)
                     pd.DataFrame(self.session_data['ranges']['step20']).to_excel(writer, sheet_name='Análise Faixas', index=False, startrow=8)
+                
+                # Aba Frequência Individual
                 if self.session_data['frequency']:
                     total = self.session_data['meta'].get('Total_Numeros_Analisados', 1)
                     df_freq = pd.DataFrame(self.session_data['frequency'], columns=['Número', 'Frequência'])
                     df_freq['Porcentagem'] = (df_freq['Frequência'] / total * 100).round(2)
                     df_freq.to_excel(writer, sheet_name='Frequência_Números', index=False)
+                
+                # 🆕 Aba Comparativo de Frequência por Tier
+                if self.session_data['freq_comparison']:
+                    fc = self.session_data['freq_comparison']
+                    # Tiers
+                    df_tiers = pd.DataFrame([
+                        {'Tier': '🔥 Alta', 'Números': ', '.join(map(str, fc['tiers']['high'])), 'Qtd': 20},
+                        {'Tier': '⚡ Média', 'Números': ', '.join(map(str, fc['tiers']['medium'])), 'Qtd': 20},
+                        {'Tier': '❄️ Baixa', 'Números': ', '.join(map(str, fc['tiers']['low'])), 'Qtd': 20}
+                    ])
+                    df_tiers.to_excel(writer, sheet_name='Comparativo_Freq', index=False, startrow=0)
+                    # Padrões
+                    df_patterns = pd.DataFrame([
+                        {'Padrão (H,M,L)': str(p), 'Ocorrências': c, '%': round(c/self.session_data['meta'].get('Total_Sorteios_Analisados',1)*100, 1)}
+                        for p, c in fc['patterns']
+                    ])
+                    df_patterns.to_excel(writer, sheet_name='Comparativo_Freq', index=False, startrow=5)
+                    # Padrão selecionado
+                    pd.DataFrame([{'✅ Padrão Selecionado': str(fc['selected_pattern']), 'Descrição': f"{fc['selected_pattern'][0]} altos + {fc['selected_pattern'][1]} médios + {fc['selected_pattern'][2]} baixos"}]).to_excel(writer, sheet_name='Comparativo_Freq', index=False, startrow=12)
 
+                # Ajustar largura de colunas
                 for sheet in writer.sheets.values():
                     for idx, col in enumerate(sheet.columns, 1):
-                        max_length = max(len(str(cell.value)) for cell in col)
-                        sheet.column_dimensions[get_column_letter(idx)].width = max_length + 4
+                        max_length = max(len(str(cell.value)) for cell in col if cell.value)
+                        sheet.column_dimensions[get_column_letter(idx)].width = min(max_length + 4, 50)
 
             messagebox.showinfo("Sucesso", f"Relatório completo salvo!\n📂 {file_path}")
         except Exception as e:
