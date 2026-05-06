@@ -13,8 +13,8 @@ from openpyxl.utils import get_column_letter
 class MegaAnalyzerApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Mega-Sena Analyzer Pro")
-        self.root.geometry("900x950")
+        self.root.title("🎲 Mega-Sena Analyzer Pro")
+        self.root.geometry("950x950")
         self.root.resizable(False, False)
 
         self.df = None
@@ -25,10 +25,11 @@ class MegaAnalyzerApp:
         self.range_stats = None
         self.top_combos = {'2': [], '3': [], '4': []}
         self.session_data = {
-            'combos': None,      # Lista de (combo, freq)
-            'ranges': None,      # Dict com stats
-            'games': [],         # Lista de dicts
-            'meta': {}           # Configurações
+            'combos': None,
+            'ranges': None,
+            'games': [],
+            'frequency': None,
+            'meta': {}
         }
 
         self._setup_ui()
@@ -48,7 +49,7 @@ class MegaAnalyzerApp:
         up_frame = ttk.Frame(main)
         up_frame.pack(fill='x', pady=(5, 15))
         self.path_var = tk.StringVar(value="Nenhuma planilha selecionada")
-        ttk.Label(up_frame, textvariable=self.path_var, wraplength=650).pack(side='left', fill='x', expand=True)
+        ttk.Label(up_frame, textvariable=self.path_var, wraplength=680).pack(side='left', fill='x', expand=True)
         ttk.Button(up_frame, text="Selecionar Arquivo", command=self.load_file).pack(side='right')
 
         # Filtros
@@ -82,12 +83,11 @@ class MegaAnalyzerApp:
         # Botões
         btn_frame = ttk.Frame(main)
         btn_frame.pack(fill='x', pady=15)
-        ttk.Button(btn_frame, text="🔍 Analisar Repetições", command=self.run_combo_analysis).pack(side='left', padx=5)
-        ttk.Button(btn_frame, text="📊 Analisar Faixas", command=self.run_range_analysis).pack(side='left', padx=5)
-        ttk.Button(btn_frame, text="️ Gerador", command=self._open_generator_config).pack(side='left', padx=5)
-        
-        # Botão de Exportação Global
-        ttk.Button(btn_frame, text="💾 Exportar Relatório Excel", command=self.export_to_excel).pack(side='right', padx=5)
+        ttk.Button(btn_frame, text="🔍 Repetições", command=self.run_combo_analysis).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text=" Faixas", command=self.run_range_analysis).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="🔢 Frequência", command=self.run_frequency_analysis).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="🎲 Gerador", command=self._open_generator_config).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text=" Exportar Excel", command=self.export_to_excel).pack(side='right', padx=5)
 
         # Resultados
         res_frame = ttk.LabelFrame(main, text="📋 Resultados", padding=10)
@@ -131,8 +131,7 @@ class MegaAnalyzerApp:
                 self._print("⚠️ Coluna de data não encontrada\n")
 
             self.path_var.set(os.path.basename(file_path))
-            # Resetar dados da sessão ao carregar novo arquivo
-            self.session_data = {'combos': None, 'ranges': None, 'games': [], 'meta': {}}
+            self.session_data = {'combos': None, 'ranges': None, 'games': [], 'frequency': None, 'meta': {}}
         except Exception as e:
             messagebox.showerror("Erro", f"Falha ao carregar:\n{e}")
 
@@ -149,13 +148,12 @@ class MegaAnalyzerApp:
             self._print("❌ Nenhum sorteio encontrado no período selecionado.\n")
             return None
         
-        # Atualizar metadados para exportação
-        self.session_data['meta'] = {
+        self.session_data['meta'].update({
             "Periodo_Inicio": start_dt.strftime("%d/%m/%Y"),
             "Periodo_Fim": end_dt.strftime("%d/%m/%Y"),
             "Total_Sorteios_Analisados": count,
             "Data_Analise": datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-        }
+        })
         
         return [sorted(row.astype(int)) for _, row in df_f[self.bolas_cols].iterrows()], count
 
@@ -166,16 +164,13 @@ class MegaAnalyzerApp:
         n = int(self.combo_size.get())
         mode = self.show_mode.get()
         
-        self._print(f"🔍 Analisando {total} jogos | Combinações de {n} números | Modo: {'TODAS' if mode=='todos' else 'REPETIDAS'}\n")
+        self._print(f" Analisando {total} jogos | Combinações de {n} números | Modo: {'TODAS' if mode=='todos' else 'REPETIDAS'}\n")
         counter = Counter()
         for jogo in bolas:
             for combo in combinations(jogo, n):
                 counter[tuple(sorted(combo))] += 1
 
-        # Salvar para uso no gerador (top 30)
         self.top_combos[str(n)] = counter.most_common(30)
-        
-        # 💾 Salvar para exportação (Top 50 mais completas)
         self.session_data['combos'] = counter.most_common(50)
 
         filtered = counter if mode == 'todos' else {k:v for k,v in counter.items() if v>=2}
@@ -200,16 +195,47 @@ class MegaAnalyzerApp:
         stats_20 = [{'Faixa': f"{r[0]}-{r[1]}", 'Média_por_Jogo': round(sum(1 for j in bolas for n in j if r[0] <= n <= r[1])/total_jogos, 2)} for r in ranges_20]
 
         self.range_stats = {'step10': stats_10, 'step20': stats_20}
-        
-        # 💾 Salvar para exportação
         self.session_data['ranges'] = {'step10': stats_10, 'step20': stats_20}
 
-        self._print("📊 ANÁLISE AUTOMÁTICA DE DISTRIBUIÇÃO POR FAIXAS:\n")
+        self._print(" ANÁLISE AUTOMÁTICA DE DISTRIBUIÇÃO POR FAIXAS:\n")
         self._print("🔹 Faixas de 10 em 10 (Média por jogo):")
         for s in stats_10: self._print(f"   {s['Faixa']}: {s['Média_por_Jogo']} números")
         self._print("\n 🔹 Faixas de 20 em 20 (Média por jogo):")
         for s in stats_20: self._print(f"   {s['Faixa']}: {s['Média_por_Jogo']} números")
         self._print("")
+
+    def run_frequency_analysis(self):
+        result = self._get_filtered_data()
+        if not result: return
+        bolas, total_jogos = result
+
+        freq = Counter()
+        for jogo in bolas:
+            freq.update(jogo)
+
+        full_freq = {n: freq.get(n, 0) for n in range(1, 61)}
+        sorted_freq = sorted(full_freq.items(), key=lambda x: x[1], reverse=True)
+        total_nums = total_jogos * 6
+
+        self._print(f" FREQUÊNCIA POR NÚMERO ({total_jogos} jogos | {total_nums} números sorteados)\n")
+        self._print("🔥 TOP 10 MAIS FREQUENTES:")
+        for num, count in sorted_freq[:10]:
+            pct = (count / total_nums) * 100
+            self._print(f"   Nº {num:02d} → {count:3d} vezes ({pct:.2f}%)")
+
+        self._print("\n❄️ TOP 10 MENOS FREQUENTES:")
+        for num, count in sorted_freq[-10:]:
+            pct = (count / total_nums) * 100
+            self._print(f"   Nº {num:02d} → {count:3d} vezes ({pct:.2f}%)")
+
+        self._print("\n📊 LISTA COMPLETA (Ordenada por frequência):")
+        for num, count in sorted_freq:
+            pct = (count / total_nums) * 100
+            self._print(f"   Nº {num:02d} → {count:3d} vezes ({pct:.2f}%)")
+        self._print("")
+
+        self.session_data['frequency'] = sorted_freq
+        self.session_data['meta']['Total_Numeros_Analisados'] = total_nums
 
     def _open_generator_config(self):
         if self.df is None:
@@ -244,11 +270,11 @@ class MegaAnalyzerApp:
 
         ttk.Label(win, text="Distribuição por Faixas:", font=('Segoe UI', 10, 'bold')).pack(anchor='w', padx=15, pady=(15,0))
         dist_var = tk.StringVar(value="historico")
-        ttk.Radiobutton(win, text="🤖 Padrão histórico (mais frequente)", variable=dist_var, value="historico").pack(anchor='w', padx=30)
+        ttk.Radiobutton(win, text=" Padrão histórico (mais frequente)", variable=dist_var, value="historico").pack(anchor='w', padx=30)
         ttk.Radiobutton(win, text="📏 Faixas de 10 em 10", variable=dist_var, value="step10").pack(anchor='w', padx=30)
         ttk.Radiobutton(win, text="📐 Faixas de 20 em 20", variable=dist_var, value="step20").pack(anchor='w', padx=30)
 
-        ttk.Button(win, text="🎲 GERAR JOGOS AGORA", command=lambda: self.generate_smart_games(
+        ttk.Button(win, text=" GERAR JOGOS AGORA", command=lambda: self.generate_smart_games(
             int(qtd_spin.get()), u_dupla.get(), u_tripla.get(), u_quadra.get(), dist_var.get(), focus_top_var.get(), win
         )).pack(pady=25, fill='x', padx=20)
 
@@ -260,7 +286,6 @@ class MegaAnalyzerApp:
 
         self._print(f"🎲 GERANDO {qtd} JOGOS INTELIGENTES...\n")
         
-        # Pool ponderado
         combo_pool = []
         weights = []
         limit = 5 if focus_top else 30
@@ -332,23 +357,21 @@ class MegaAnalyzerApp:
                         "Freq_Semente": seed_freq if seed_combo else 0
                     })
 
-        # 💾 Salvar no estado global
         self.session_data['games'] = generated_list
         self.session_data['meta']['Jogos_Gerados'] = qtd
         self.session_data['meta']['Modo_Distribuicao'] = dist_mode
 
-        # Saída
         if generated_list:
             self._print(f"✅ {len(generated_list)} JOGOS GERADOS:\n")
             for item in generated_list:
                 self._print(f"  Jogo {item['Jogo']:2d}: [{item['Bola1']}, {item['Bola2']}, {item['Bola3']}, {item['Bola4']}, {item['Bola5']}, {item['Bola6']}]")
-            self._print(f"\n 💾 Clique em 'Exportar Relatório Excel' para salvar TUDO (Jogos + Análises).\n")
+            self._print(f"\n 💾 Clique em 'Exportar Excel' para salvar TUDO.\n")
         else:
             self._print("❌ Não foi possível gerar jogos únicos com essas restrições.\n")
 
     def export_to_excel(self):
-        if all(v is None or v == [] for v in [self.session_data['combos'], self.session_data['ranges'], self.session_data['games']]):
-            messagebox.showwarning("Exportar", "Nenhuma análise ou jogo foi realizado nesta sessão.")
+        if all(v is None or v == [] for v in [self.session_data['combos'], self.session_data['ranges'], self.session_data['games'], self.session_data['frequency']]):
+            messagebox.showwarning("Exportar", "Nenhuma análise foi realizada nesta sessão.")
             return
 
         file_path = filedialog.asksaveasfilename(
@@ -360,34 +383,21 @@ class MegaAnalyzerApp:
 
         try:
             with pd.ExcelWriter(file_path, engine='openpyxl') as writer:
-                # 1. Aba Configuração
                 if self.session_data['meta']:
-                    df_meta = pd.DataFrame(list(self.session_data['meta'].items()), columns=['Parâmetro', 'Valor'])
-                    df_meta.to_excel(writer, sheet_name='Configuração', index=False)
-
-                # 2. Aba Jogos Gerados
+                    pd.DataFrame(list(self.session_data['meta'].items()), columns=['Parâmetro', 'Valor']).to_excel(writer, sheet_name='Configuração', index=False)
                 if self.session_data['games']:
                     pd.DataFrame(self.session_data['games']).to_excel(writer, sheet_name='Jogos Gerados', index=False)
-
-                # 3. Aba Combinações
                 if self.session_data['combos']:
-                    # Transforma lista de tupas ((n1,n2), freq) em DataFrame
-                    df_combos = pd.DataFrame(
-                        [(str(list(c)), f) for c, f in self.session_data['combos']],
-                        columns=['Combinação', 'Frequência']
-                    )
-                    df_combos.to_excel(writer, sheet_name='Análise Combinações', index=False)
-
-                # 4. Aba Faixas
+                    pd.DataFrame([(str(list(c)), f) for c, f in self.session_data['combos']], columns=['Combinação', 'Frequência']).to_excel(writer, sheet_name='Análise Combinações', index=False)
                 if self.session_data['ranges']:
-                    df_10 = pd.DataFrame(self.session_data['ranges']['step10'])
-                    df_20 = pd.DataFrame(self.session_data['ranges']['step20'])
-                    
-                    # Escreve os dois na mesma aba (espaçados)
-                    df_10.to_excel(writer, sheet_name='Análise Faixas', index=False, startrow=0)
-                    df_20.to_excel(writer, sheet_name='Análise Faixas', index=False, startrow=8)
+                    pd.DataFrame(self.session_data['ranges']['step10']).to_excel(writer, sheet_name='Análise Faixas', index=False, startrow=0)
+                    pd.DataFrame(self.session_data['ranges']['step20']).to_excel(writer, sheet_name='Análise Faixas', index=False, startrow=8)
+                if self.session_data['frequency']:
+                    total = self.session_data['meta'].get('Total_Numeros_Analisados', 1)
+                    df_freq = pd.DataFrame(self.session_data['frequency'], columns=['Número', 'Frequência'])
+                    df_freq['Porcentagem'] = (df_freq['Frequência'] / total * 100).round(2)
+                    df_freq.to_excel(writer, sheet_name='Frequência_Números', index=False)
 
-                # Ajustar largura de colunas automaticamente
                 for sheet in writer.sheets.values():
                     for idx, col in enumerate(sheet.columns, 1):
                         max_length = max(len(str(cell.value)) for cell in col)
